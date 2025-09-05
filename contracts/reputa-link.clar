@@ -397,3 +397,102 @@
     )
   )
 )
+
+;; Boost Post Content
+(define-public (boost-post (post-id uint) (amount uint))
+  (let
+    (
+      (current-block stacks-block-height)
+    )
+    ;; Validation
+    (asserts! (>= amount MIN_CONTENT_BOOST) ERR_INVALID_AMOUNT)
+    (asserts! (is-some (get-post post-id)) ERR_POST_NOT_FOUND)
+    (asserts! (>= (stx-get-balance tx-sender) amount) ERR_INSUFFICIENT_FUNDS)
+    
+    ;; Transfer Funds
+    (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+    
+    ;; Record Boost
+    (map-set post-boosts
+      { post-id: post-id, booster: tx-sender }
+      { amount: amount, boosted-at: current-block }
+    )
+    
+    ;; Update Post
+    (match (get-post post-id)
+      post-data
+      (map-set posts
+        { post-id: post-id }
+        (merge post-data { boosted-amount: (+ (get boosted-amount post-data) amount) })
+      )
+      false
+    )
+    (ok true)
+  )
+)
+
+;; PUBLIC FUNCTIONS - ENDORSEMENT SYSTEM
+
+;; Endorse Post
+(define-public (endorse-post (post-id uint) (stake-amount uint))
+  (let
+    (
+      (endorser-profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    ;; Validation
+    (asserts! (>= stake-amount MIN_ENDORSEMENT) ERR_INVALID_AMOUNT)
+    (asserts! (is-some (get-post post-id)) ERR_POST_NOT_FOUND)
+    
+    (match endorser-profile-result
+      endorser-id
+      (begin
+        ;; Check for Existing Endorsement
+        (asserts! (is-none (map-get? post-endorsements { post-id: post-id, endorser: endorser-id })) ERR_ALREADY_ENDORSED)
+        (asserts! (>= (stx-get-balance tx-sender) stake-amount) ERR_INSUFFICIENT_FUNDS)
+        
+        ;; Lock Stake
+        (try! (stx-transfer? stake-amount tx-sender (as-contract tx-sender)))
+        
+        ;; Record Endorsement
+        (map-set post-endorsements
+          { post-id: post-id, endorser: endorser-id }
+          { endorsed-at: current-block, stake-amount: stake-amount }
+        )
+        
+        ;; Update Post and Author Metrics
+        (update-post-endorsement-metrics post-id)
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Endorse Profile
+(define-public (endorse-profile (endorsed-id uint) (stake-amount uint) (message (string-utf8 140)))
+  (let
+    (
+      (endorser-profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    ;; Validation
+    (asserts! (>= stake-amount MIN_ENDORSEMENT) ERR_INVALID_AMOUNT)
+    (asserts! (is-some (get-profile endorsed-id)) ERR_PROFILE_NOT_FOUND)
+    
+    (match endorser-profile-result
+      endorser-id
+      (begin
+        ;; Prevent Self-Endorsement
+        (asserts! (not (is-eq endorser-id endorsed-id)) ERR_SELF_ACTION)
+        (asserts! (is-none (map-get? profile-endorsements { endorser: endorser-id, endorsed: endorsed-id })) ERR_ALREADY_ENDORSED)
+        (asserts! (>= (stx-get-balance tx-sender) stake-amount) ERR_INSUFFICIENT_FUNDS)
+        
+        ;; Lock Stake
+        (try! (stx-transfer? stake-amount tx-sender (as-contract tx-sender)))
+        
+        ;; Record Endorsement
+        (map-set profile-endorsements
+          { endorser: endorser-id, endorsed: endorsed-id }
+          { endorsed-at: current-block, stake-amount: stake-amount, message: message }
+        )
