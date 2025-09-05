@@ -296,3 +296,104 @@
     )
   )
 )
+
+;; PUBLIC FUNCTIONS - SOCIAL CONNECTIONS
+
+;; Follow User
+(define-public (follow-user (following-id uint))
+  (let
+    (
+      (follower-profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    (match follower-profile-result
+      follower-id
+      (begin
+        ;; Validation Checks
+        (asserts! (not (is-eq follower-id following-id)) ERR_SELF_ACTION)
+        (asserts! (is-some (get-profile following-id)) ERR_PROFILE_NOT_FOUND)
+        (asserts! (not (is-following follower-id following-id)) ERR_ALREADY_FOLLOWING)
+        
+        ;; Create Follow Relationship
+        (map-set following
+          { follower: follower-id, following: following-id }
+          { followed-at: current-block, is-active: true }
+        )
+        
+        ;; Update Metrics
+        (update-follow-metrics following-id follower-id true)
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Unfollow User
+(define-public (unfollow-user (following-id uint))
+  (let
+    (
+      (follower-profile-result (map-get? principal-to-profile tx-sender))
+    )
+    (match follower-profile-result
+      follower-id
+      (begin
+        ;; Validation
+        (asserts! (is-following follower-id following-id) ERR_NOT_FOLLOWING)
+        
+        ;; Remove Relationship
+        (map-delete following { follower: follower-id, following: following-id })
+        
+        ;; Update Metrics
+        (update-follow-metrics following-id follower-id false)
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; PUBLIC FUNCTIONS - CONTENT MANAGEMENT
+
+;; Create Post
+(define-public (create-post (content (string-utf8 500)))
+  (let
+    (
+      (author-profile-result (map-get? principal-to-profile tx-sender))
+      (post-id (var-get next-post-id))
+      (current-block stacks-block-height)
+    )
+    (match author-profile-result
+      author-id
+      (begin
+        ;; Create Post
+        (map-set posts
+          { post-id: post-id }
+          {
+            author: author-id,
+            content: content,
+            created-at: current-block,
+            boosted-amount: u0,
+            endorsement-count: u0,
+            is-active: true
+          }
+        )
+        
+        ;; Update Author Metrics
+        (match (get-profile author-id)
+          author-profile
+          (map-set profiles
+            { profile-id: author-id }
+            (merge author-profile { post-count: (+ (get post-count author-profile) u1) })
+          )
+          false
+        )
+        
+        ;; Update State
+        (var-set next-post-id (+ post-id u1))
+        (ok post-id)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
