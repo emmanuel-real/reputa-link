@@ -200,3 +200,99 @@
     
     ;; Lock Initial Stake
     (try! (stx-transfer? MIN_PROFILE_STAKE tx-sender (as-contract tx-sender)))
+
+    ;; Initialize Profile
+    (map-set profiles
+      { profile-id: profile-id }
+      {
+        owner: tx-sender,
+        username: username,
+        bio: bio,
+        avatar-url: avatar-url,
+        created-at: current-block,
+        staked-amount: MIN_PROFILE_STAKE,
+        reputation-score: MIN_PROFILE_STAKE,
+        follower-count: u0,
+        following-count: u0,
+        post-count: u0,
+        total-endorsements: u0,
+        is-active: true
+      }
+    )
+    
+    ;; Setup Identity Mappings
+    (map-set username-to-profile username profile-id)
+    (map-set principal-to-profile tx-sender profile-id)
+    (map-set profile-stakes 
+      { profile-id: profile-id, staker: tx-sender }
+      { amount: MIN_PROFILE_STAKE, staked-at: current-block }
+    )
+    
+    ;; Update State
+    (var-set next-profile-id (+ profile-id u1))
+    (ok profile-id)
+  )
+)
+
+;; Update Profile Information
+(define-public (update-profile (bio (string-utf8 280)) (avatar-url (string-ascii 200)))
+  (let
+    (
+      (profile-result (map-get? principal-to-profile tx-sender))
+    )
+    (match profile-result
+      profile-id
+      (match (get-profile profile-id)
+        profile-data
+        (begin
+          (map-set profiles
+            { profile-id: profile-id }
+            (merge profile-data { bio: bio, avatar-url: avatar-url })
+          )
+          (ok true)
+        )
+        ERR_PROFILE_NOT_FOUND
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; Stake for Enhanced Reputation
+(define-public (stake-for-reputation (amount uint))
+  (let
+    (
+      (profile-result (map-get? principal-to-profile tx-sender))
+      (current-block stacks-block-height)
+    )
+    ;; Validation
+    (asserts! (>= amount MIN_CONTENT_BOOST) ERR_INVALID_AMOUNT)
+    (asserts! (>= (stx-get-balance tx-sender) amount) ERR_INSUFFICIENT_FUNDS)
+    
+    (match profile-result
+      profile-id
+      (begin
+        ;; Transfer Stake
+        (try! (stx-transfer? amount tx-sender (as-contract tx-sender)))
+        
+        ;; Update Profile Stake
+        (match (get-profile profile-id)
+          profile-data
+          (map-set profiles
+            { profile-id: profile-id }
+            (merge profile-data { staked-amount: (+ (get staked-amount profile-data) amount) })
+          )
+          false
+        )
+        
+        ;; Record Transaction
+        (map-set profile-stakes
+          { profile-id: profile-id, staker: tx-sender }
+          { amount: amount, staked-at: current-block }
+        )
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
