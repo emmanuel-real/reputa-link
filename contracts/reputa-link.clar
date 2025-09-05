@@ -100,3 +100,103 @@
   { post-id: uint, endorser: uint }
   { endorsed-at: uint, stake-amount: uint }
 )
+
+(define-map profile-endorsements
+  { endorser: uint, endorsed: uint }
+  { endorsed-at: uint, stake-amount: uint, message: (string-utf8 140) }
+)
+
+;; Economic Systems
+(define-map profile-stakes
+  { profile-id: uint, staker: principal }
+  { amount: uint, staked-at: uint }
+)
+
+(define-map post-boosts
+  { post-id: uint, booster: principal }
+  { amount: uint, boosted-at: uint }
+)
+
+;; READ-ONLY FUNCTIONS
+
+;; Profile Retrieval Functions
+(define-read-only (get-profile (profile-id uint))
+  (map-get? profiles { profile-id: profile-id })
+)
+
+(define-read-only (get-profile-by-username (username (string-ascii 50)))
+  (match (map-get? username-to-profile username)
+    profile-id (get-profile profile-id)
+    none
+  )
+)
+
+(define-read-only (get-profile-by-principal (user principal))
+  (match (map-get? principal-to-profile user)
+    profile-id (get-profile profile-id)
+    none
+  )
+)
+
+;; Utility Functions
+(define-read-only (is-username-available (username (string-ascii 50)))
+  (is-none (map-get? username-to-profile username))
+)
+
+(define-read-only (is-following (follower-id uint) (following-id uint))
+  (match (map-get? following { follower: follower-id, following: following-id })
+    follow-data (get is-active follow-data)
+    false
+  )
+)
+
+(define-read-only (get-post (post-id uint))
+  (map-get? posts { post-id: post-id })
+)
+
+;; Protocol State Functions
+(define-read-only (get-next-profile-id)
+  (var-get next-profile-id)
+)
+
+(define-read-only (get-next-post-id)
+  (var-get next-post-id)
+)
+
+;; Reputation Calculation
+(define-read-only (calculate-reputation-score (profile-id uint))
+  (match (get-profile profile-id)
+    profile-data
+    (let
+      (
+        (base-score (get staked-amount profile-data))
+        (social-bonus (* (get follower-count profile-data) u1000))
+        (trust-bonus (* (get total-endorsements profile-data) u2000))
+        (content-bonus (* (get post-count profile-data) u500))
+      )
+      (+ base-score (+ social-bonus (+ trust-bonus content-bonus)))
+    )
+    u0
+  )
+)
+
+;; PUBLIC FUNCTIONS - PROFILE MANAGEMENT
+
+;; Create Verified Profile
+(define-public (create-profile 
+  (username (string-ascii 50))
+  (bio (string-utf8 280))
+  (avatar-url (string-ascii 200))
+)
+  (let
+    (
+      (profile-id (var-get next-profile-id))
+      (current-block stacks-block-height)
+    )
+    ;; Validation Checks
+    (asserts! (is-none (map-get? principal-to-profile tx-sender)) ERR_PROFILE_EXISTS)
+    (asserts! (is-username-available username) ERR_PROFILE_EXISTS)
+    (asserts! (>= (stx-get-balance tx-sender) MIN_PROFILE_STAKE) ERR_INSUFFICIENT_FUNDS)
+    
+    ;; Lock Initial Stake
+    (try! (stx-transfer? MIN_PROFILE_STAKE tx-sender (as-contract tx-sender)))
