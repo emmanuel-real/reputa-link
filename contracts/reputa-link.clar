@@ -496,3 +496,93 @@
           { endorser: endorser-id, endorsed: endorsed-id }
           { endorsed-at: current-block, stake-amount: stake-amount, message: message }
         )
+
+        ;; Update Endorsed Profile
+        (match (get-profile endorsed-id)
+          endorsed-profile
+          (map-set profiles
+            { profile-id: endorsed-id }
+            (merge endorsed-profile { total-endorsements: (+ (get total-endorsements endorsed-profile) u1) })
+          )
+          false
+        )
+        (ok true)
+      )
+      ERR_PROFILE_NOT_FOUND
+    )
+  )
+)
+
+;; PRIVATE HELPER FUNCTIONS
+
+;; Update Follow Relationship Metrics
+(define-private (update-follow-metrics (following-id uint) (follower-id uint) (is-following-action bool))
+  (begin
+    ;; Update Target Profile (Following)
+    (match (get-profile following-id)
+      following-profile
+      (map-set profiles
+        { profile-id: following-id }
+        (merge following-profile { 
+          follower-count: (if is-following-action 
+                            (+ (get follower-count following-profile) u1)
+                            (- (get follower-count following-profile) u1))
+        })
+      )
+      false
+    )
+    
+    ;; Update Follower Profile
+    (match (get-profile follower-id)
+      follower-profile
+      (map-set profiles
+        { profile-id: follower-id }
+        (merge follower-profile { 
+          following-count: (if is-following-action
+                             (+ (get following-count follower-profile) u1)
+                             (- (get following-count follower-profile) u1))
+        })
+      )
+      false
+    )
+  )
+)
+
+;; Update Post Endorsement Metrics
+(define-private (update-post-endorsement-metrics (post-id uint))
+  (begin
+    ;; Update Post Endorsement Count
+    (match (get-post post-id)
+      post-data
+      (begin
+        (map-set posts
+          { post-id: post-id }
+          (merge post-data { endorsement-count: (+ (get endorsement-count post-data) u1) })
+        )
+        
+        ;; Update Author's Total Endorsements
+        (match (get-profile (get author post-data))
+          author-profile
+          (map-set profiles
+            { profile-id: (get author post-data) }
+            (merge author-profile { total-endorsements: (+ (get total-endorsements author-profile) u1) })
+          )
+          false
+        )
+      )
+      false
+    )
+  )
+)
+
+;; ADMINISTRATION FUNCTIONS
+
+;; Update Protocol Fee Rate (Owner Only)
+(define-public (set-protocol-fee-rate (new-rate uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_UNAUTHORIZED)
+    (asserts! (<= new-rate u1000) ERR_INVALID_AMOUNT) ;; Maximum 10% fee
+    (var-set protocol-fee-rate new-rate)
+    (ok true)
+  )
+)
